@@ -143,7 +143,6 @@ const Context = struct {
     region: std.ArrayList(u64),
     indexInRegion: std.ArrayList(u64),
     agentsInRegions: std.ArrayList(std.ArrayList(u64)),
-    vacatsInRegions: std.ArrayList(std.ArrayList(u64)),
     fps: i64,
 
     fn init(allocator: std.mem.Allocator, config: *const Config, constants: *const Constants) !Context {
@@ -157,12 +156,10 @@ const Context = struct {
             .region = try std.ArrayList(u64).initCapacity(allocator, config.maxAgents),
             .indexInRegion = try std.ArrayList(u64).initCapacity(allocator, config.maxAgents),
             .agentsInRegions = try std.ArrayList(std.ArrayList(u64)).initCapacity(allocator, numberOfRegions),
-            .vacatsInRegions = try std.ArrayList(std.ArrayList(u64)).initCapacity(allocator, numberOfRegions),
             .fps = 0,
         };
         for (0..numberOfRegions) |_| {
             context.agentsInRegions.appendAssumeCapacity(try std.ArrayList(u64).initCapacity(allocator, constants.regionEstimatedCapacity));
-            context.vacatsInRegions.appendAssumeCapacity(try std.ArrayList(u64).initCapacity(allocator, constants.regionEstimatedCapacity));
         }
 
         return context;
@@ -196,8 +193,8 @@ const Context = struct {
                     const k: f32 = 7.0 / 5.0;
                     const t = @as(f32, @floatFromInt(i)) * (3.5716 * std.math.pi * k) / (@as(f32, @floatFromInt(config.maxAgents)));
                     context.targets.appendAssumeCapacity([_]f32{
-                        constants.screenWidthf / 2 + constants.screenHeightf / 2 * @cos(k * t) * @cos(t),
-                        constants.screenHeightf / 2 + constants.screenHeightf / 2 * @cos(k * t) * @sin(t),
+                        constants.screenWidthf / 2 + constants.screenHeightf * 0.45 * @cos(k * t) * @cos(t),
+                        constants.screenHeightf / 2 + constants.screenHeightf * 0.45 * @cos(k * t) * @sin(t),
                     });
                 },
             }
@@ -247,21 +244,10 @@ fn init(confpath: []const u8) !M {
 }
 
 fn loop(m: *M) !void {
-    //    var frameStart: i64 = 0;
     while (m.running) {
         try m.simulate();
         try m.blit();
         try m.handleEvents();
-        //        if (m.constants.showFps == 1) {
-        //            const frameEnd = std.time.milliTimestamp();
-        //            const frameTime = (frameEnd - frameStart);
-        //            if (frameTime == 0) {
-        //                m.context.fps = 999;
-        //            } else {
-        //                m.context.fps = @divTrunc(std.time.ms_per_s, frameTime);
-        //            }
-        //            frameStart = frameEnd;
-        //        }
     }
 }
 
@@ -325,18 +311,17 @@ fn simulate(m: *M) !void {
         const newR = positionToRegion(p.*, &m.config, &m.constants);
         if (r.* != newR) {
             const oldIndexInRegion = m.context.indexInRegion.items[i];
-            m.context.vacatsInRegions.items[r.*].appendAssumeCapacity(oldIndexInRegion);
-            //           m.context.agentsInRegions.items[r.*].items[oldIndexInRegion] = m.config.maxAgents + 1;
-
-            const vacantIndexInRegion = m.context.vacatsInRegions.items[newR].pop();
-            if (vacantIndexInRegion != null) {
-                m.context.agentsInRegions.items[newR].items[vacantIndexInRegion.?] = i;
-                m.context.indexInRegion.items[i] = vacantIndexInRegion.?;
+            
+            if (m.context.agentsInRegions.items[r.*].getLast() == i) {
+                _ = m.context.agentsInRegions.items[r.*].pop() orelse return;
             } else {
-                const newIndexInRegion = m.context.agentsInRegions.items[newR].items.len;
-                m.context.agentsInRegions.items[newR].appendAssumeCapacity(i);
-                m.context.indexInRegion.items[i] = newIndexInRegion;
+                const lastAgent = m.context.agentsInRegions.items[r.*].pop() orelse return error.AgentOutOfNowhere;
+                m.context.indexInRegion.items[lastAgent] = oldIndexInRegion;
+                m.context.agentsInRegions.items[r.*].items[oldIndexInRegion] = lastAgent;
             }
+            m.context.indexInRegion.items[i] = m.context.agentsInRegions.items[newR].items.len;
+            m.context.agentsInRegions.items[newR].appendAssumeCapacity(i);
+
             r.* = newR;
         }
 
@@ -470,10 +455,6 @@ fn deinit(m: *M) void {
         regionAgents.deinit(alloc);
     }
     m.context.agentsInRegions.deinit(alloc);
-    for (m.context.vacatsInRegions.items) |*regionAgents| {
-        regionAgents.deinit(alloc);
-    }
-    m.context.vacatsInRegions.deinit(alloc);
     m.context.positions.deinit(alloc);
     m.context.agentIds.deinit(alloc);
     m.context.region.deinit(alloc);
