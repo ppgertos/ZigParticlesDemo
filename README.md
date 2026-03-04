@@ -1,4 +1,9 @@
-# Zig Particle Demo
+# Zig Particles Demo
+
+Real-time particle simulation written in Zig.
+Implements spatial partitioning (uniform grid).
+Uses Raylib for rendering.
+Supports up to 20k particles.
 
 Project done as a effect of weekend home hackathon.
 Main goal was to learn how to optimize simulation of particle movement.
