@@ -12,6 +12,8 @@ const Shape = enum(u8) {
     Random,
     Heart,
     Flower,
+    Lissajous,
+    Circle,
 };
 
 const Config = struct {
@@ -26,14 +28,21 @@ const Config = struct {
     regionsNumberY: u64 = 70,
     screenHeight: i32 = 600,
     screenWidth: i32 = 960,
-    showFps: u1 = 1,
-    showGrid: u1 = 1,
-    showShape: u1 = 1,
-    speedFactor: f32 = 0.0004,
-    speedLimit: f32 = 1,
+    showFps: u1 = 0,
+    showGrid: u1 = 0,
+    showShape: u1 = 0,
+    frictionFactor: f32 = 125,
+    speedLimit: f32 = 200,
 
     pub fn load(filePath: []const u8) !Config {
         var config = Config{};
+
+        const monitor = ray.GetCurrentMonitor();
+        config.screenWidth = ray.GetMonitorWidth(monitor);
+        config.screenHeight = ray.GetMonitorHeight(monitor);
+
+        std.log.info("SCREEN {d} {d}/{d}", .{ monitor, config.screenWidth, config.screenHeight });
+
         var file = try std.fs.cwd().openFile(filePath, .{ .mode = .read_only });
         defer file.close();
         var rbuf: [50]u8 = undefined;
@@ -76,8 +85,8 @@ const Config = struct {
                 config.screenWidth = try std.fmt.parseInt(i32, value, 10);
             } else if (std.mem.eql(u8, name, "speedLimit")) {
                 config.speedLimit = try std.fmt.parseFloat(f32, value);
-            } else if (std.mem.eql(u8, name, "speedFactor")) {
-                config.speedFactor = try std.fmt.parseFloat(f32, value);
+            } else if (std.mem.eql(u8, name, "frictionFactor")) {
+                config.frictionFactor = try std.fmt.parseFloat(f32, value);
             } else if (std.mem.eql(u8, name, "randSeed")) {
                 config.randSeed = try std.fmt.parseInt(u64, value, 0);
             }
@@ -165,20 +174,38 @@ const Context = struct {
         return context;
     }
 
-    fn fill(context: *Context, config: *const Config, constants: *const Constants) void {
-        var randEngine = std.Random.DefaultPrng.init(config.randSeed);
+    fn fill(context: *Context, config: *const Config, constants: *const Constants, randEngine: *std.Random) void {
         for (0..config.maxAgents) |i| {
             context.agentIds.appendAssumeCapacity(i);
             context.indexInRegion.appendAssumeCapacity(0);
             context.speeds.appendAssumeCapacity([_]f32{
-                (randEngine.random().float(f32) - 0.5) * constants.screenHeightf,
-                (randEngine.random().float(f32) - 0.5) * constants.screenHeightf,
+                (randEngine.float(f32) - 0.5) * constants.screenHeightf,
+                (randEngine.float(f32) - 0.5) * constants.screenHeightf,
             });
-            switch (config.finalShape) {
+
+            context.positions.appendAssumeCapacity([_]f32{
+                (randEngine.float(f32)) * constants.screenWidthf,
+                (randEngine.float(f32)) * constants.screenHeightf,
+            });
+            const p = context.positions.items[i];
+            const r = positionToRegion(p, config, constants);
+            context.region.appendAssumeCapacity(r);
+            context.agentsInRegions.items[r].appendAssumeCapacity(i);
+            context.indexInRegion.items[i] = context.agentsInRegions.items[r].items.len - 1;
+        }
+        context.setTargets(constants, config, config.finalShape, randEngine);
+    }
+
+    pub fn setTargets(context: *Context, constants: *const Constants, config: *const Config, shape: Shape, randEngine: *std.Random) void {
+        const xOffset = constants.screenWidthf / 2;
+        const yOffset = constants.screenHeightf / 2;
+        const scale = constants.screenHeightf * 0.45;
+        for (0..config.maxAgents) |i| {
+            switch (shape) {
                 .Random => {
                     context.targets.appendAssumeCapacity([_]f32{
-                        (randEngine.random().float(f32)) * constants.screenWidthf,
-                        (randEngine.random().float(f32)) * constants.screenHeightf,
+                        (randEngine.float(f32)) * constants.screenWidthf,
+                        (randEngine.float(f32)) * constants.screenHeightf,
                     });
                 },
                 .Heart => {
@@ -193,20 +220,27 @@ const Context = struct {
                     const k: f32 = 7.0 / 5.0;
                     const t = @as(f32, @floatFromInt(i)) * (3.5716 * std.math.pi * k) / (@as(f32, @floatFromInt(config.maxAgents)));
                     context.targets.appendAssumeCapacity([_]f32{
-                        constants.screenWidthf / 2 + constants.screenHeightf * 0.45 * @cos(k * t) * @cos(t),
-                        constants.screenHeightf / 2 + constants.screenHeightf * 0.45 * @cos(k * t) * @sin(t),
+                        xOffset + scale * @cos(k * t) * @cos(t),
+                        yOffset + scale * @cos(k * t) * @sin(t),
+                    });
+                },
+                .Lissajous => {
+                    const k: f32 = 7;
+                    const j: f32 = 5;
+                    const t = @as(f32, @floatFromInt(i)) * 2 * std.math.pi / @as(f32, @floatFromInt(config.maxAgents));
+                    context.targets.appendAssumeCapacity([_]f32{
+                        xOffset + scale * @cos(k * t),
+                        yOffset + scale * @sin(j * t),
+                    });
+                },
+                .Circle => {
+                    const t = @as(f32, @floatFromInt(i)) * 2 * std.math.pi / @as(f32, @floatFromInt(config.maxAgents));
+                    context.targets.appendAssumeCapacity([_]f32{
+                        xOffset + scale * @cos(t),
+                        yOffset + scale * @sin(t),
                     });
                 },
             }
-            context.positions.appendAssumeCapacity([_]f32{
-                (randEngine.random().float(f32)) * constants.screenWidthf,
-                (randEngine.random().float(f32)) * constants.screenHeightf,
-            });
-            const p = context.positions.items[i];
-            const r = positionToRegion(p, config, constants);
-            context.region.appendAssumeCapacity(r);
-            context.agentsInRegions.items[r].appendAssumeCapacity(i);
-            context.indexInRegion.items[i] = context.agentsInRegions.items[r].items.len - 1;
         }
     }
 };
@@ -216,6 +250,8 @@ running: bool,
 config: Config,
 constants: Constants,
 context: Context = undefined,
+xoshi: std.Random.Xoshiro256,
+randEngine: std.Random,
 
 pub fn main() !void {
     var m = try init("config.ini");
@@ -225,20 +261,27 @@ pub fn main() !void {
 }
 
 fn init(confpath: []const u8) !M {
+    ray.SetTraceLogLevel(ray.LOG_ERROR);
+    ray.InitWindow(0, 0, "Zig Particle Demo");
+
     var m = M{
         .allocator = std.heap.GeneralPurposeAllocator(.{}){},
         .running = true,
         .config = try Config.load(confpath),
         .constants = undefined,
         .context = undefined,
+        .xoshi = undefined,
+        .randEngine = undefined,
     };
     errdefer m.deinit();
+    m.xoshi = std.Random.DefaultPrng.init(m.config.randSeed);
+    m.randEngine = m.xoshi.random();
+
     m.constants = try Constants.calculate(&m.config);
     m.context = try Context.init(m.allocator.allocator(), &m.config, &m.constants);
-    m.context.fill(&m.config, &m.constants);
+    m.context.fill(&m.config, &m.constants, &m.randEngine);
 
-    ray.SetTraceLogLevel(ray.LOG_ERROR);
-    ray.InitWindow(m.config.screenWidth, m.config.screenHeight, "Zig Particle Demo");
+    ray.SetWindowSize(m.config.screenWidth, m.config.screenHeight);
 
     return m;
 }
@@ -260,45 +303,25 @@ fn simulate(m: *M) !void {
         var p = &m.context.positions.items[i];
         const s = &m.context.speeds.items[i];
         // moving agents
-        const nx = p[0] + s[0] * m.config.speedFactor;
-        const ny = p[1] + s[1] * m.config.speedFactor;
+        const nx = p[0] + s[0] / m.config.frictionFactor;
+        const ny = p[1] + s[1] / m.config.frictionFactor;
 
         // bumping on edges
-        if (nx <= 0.0 or m.constants.screenWidthf <= nx) {
+        if (nx <= m.config.epsilonAtZero or m.constants.screenWidthf <= nx) {
             s[0] = -s[0];
-            p[0] += s[0] * m.config.speedFactor;
+            p[0] += s[0] / m.config.frictionFactor;
         } else {
             p[0] = nx;
         }
-        if (ny <= 0.0 or m.constants.screenHeightf <= ny) {
+        if (ny <= m.config.epsilonAtZero or m.constants.screenHeightf <= ny) {
             s[1] = -s[1];
-            p[1] += s[1] * m.config.speedFactor;
+            p[1] += s[1] / m.config.frictionFactor;
         } else {
             p[1] = ny;
         }
 
-        // homing to target
-        const t = m.context.targets.items[i];
-        const d = s[0] * (t[1] - p[1]) - s[1] * (t[0] - p[0]);
-
-        //       0.5 deg 1 deg            5 deg
-        // sin() 0.0087  0.0174524064373  0.0348994967025
-        // cos() 0.9999  0.999847695156   0.999390827019
-
-        // rotating speed vector, slightly toward target
-        const rots = 0.0174524064373;
-        const rotc = 0.999847695156;
-        if (d > 0) {
-            const nsx = s[0] * rotc - s[1] * rots;
-            s[1] = s[0] * rots + s[1] * rotc;
-            s[0] = nsx;
-        } else if (d < 0) {
-            const nsx = s[0] * rotc + s[1] * rots;
-            s[1] = s[0] * (-rots) + s[1] * rotc;
-            s[0] = nsx;
-        }
-
         // attracting agent toward target
+        const t = m.context.targets.items[i];
         const tdiff = [2]f32{ t[0] - p[0], t[1] - p[1] };
         const tdist = tdiff[0] * tdiff[0] + tdiff[1] * tdiff[1];
         if (tdist > m.config.epsilonAtZero) {
@@ -306,12 +329,36 @@ fn simulate(m: *M) !void {
             s[1] += tdiff[1] * (m.config.attractionFactor / tdist);
         }
 
+        // calculating determinant to find out direction toward the target
+        const d = s[0] * (t[1] - p[1]) - s[1] * (t[0] - p[0]);
+
+        //       0.5 deg 1 deg            5 deg
+        // sin() 0.0087  0.0174524064373  0.0348994967025
+        // cos() 0.9999  0.999847695156   0.999390827019
+
+        // rotating speed vector, slightly toward target
+        const rotationSin = 0.0174524064373;
+        const rotationCos = 0.999847695156;
+        var newS = s.*;
+        if (d > 0) {
+            newS = [_]f32{
+                s[0] * rotationCos - s[1] * rotationSin,
+                s[0] * rotationSin + s[1] * rotationCos,
+            };
+        } else if (d < 0) {
+            newS = [_]f32{
+                s[0] * rotationCos + s[1] * rotationSin,
+                s[0] * (-rotationSin) + s[1] * rotationCos,
+            };
+        }
+        s.* = newS;
+
         // handling transitions between regions
         const r = &m.context.region.items[i];
         const newR = positionToRegion(p.*, &m.config, &m.constants);
         if (r.* != newR) {
             const oldIndexInRegion = m.context.indexInRegion.items[i];
-            
+
             if (m.context.agentsInRegions.items[r.*].getLast() == i) {
                 _ = m.context.agentsInRegions.items[r.*].pop() orelse return;
             } else {
@@ -341,18 +388,10 @@ fn simulate(m: *M) !void {
         }
 
         // speed clamping
-        if (m.config.speedLimit != 0.0) {
-            const maxV = m.config.speedLimit;
-            if (s[0] < -maxV) {
-                s[0] = -maxV;
-            } else if (maxV < s[0]) {
-                s[0] = maxV;
-            }
-            if (s[1] < -maxV) {
-                s[1] = -maxV;
-            } else if (maxV < s[1]) {
-                s[1] = maxV;
-            }
+        if (m.config.speedLimit * m.config.speedLimit < s[0] * s[0] + s[1] * s[1]) {
+            const scale = m.config.speedLimit / @sqrt(s[0] * s[0] + s[1] * s[1]);
+            s[0] *= scale;
+            s[1] *= scale;
         }
     }
 }
@@ -361,13 +400,15 @@ fn blit(m: *M) !void {
     ray.BeginDrawing();
     defer ray.EndDrawing();
     ray.ClearBackground(ray.BLACK);
-    var buf = [_]u8{0x0} ** 15;
+    const here = struct {
+        var buf: [15]u8 = [_]u8{0x0} ** 15;
+    };
 
     if (m.config.showGrid == 1) {
         var x: f32 = 0;
         while (x < m.constants.screenWidthf) : (x += m.constants.regionWidth) {
             ray.DrawLineV(.{ .x = x, .y = 0 }, .{ .x = x, .y = m.constants.screenHeightf }, ray.DARKGRAY);
-            const numAsString = try std.fmt.bufPrintZ(&buf, "{d}", .{x});
+            const numAsString = try std.fmt.bufPrintZ(&here.buf, "{d}", .{x});
             ray.DrawTextEx(
                 ray.GetFontDefault(),
                 @ptrCast(numAsString),
@@ -380,7 +421,7 @@ fn blit(m: *M) !void {
         var y: f32 = 0;
         while (y < m.constants.screenHeightf) : (y += m.constants.regionHeight) {
             ray.DrawLineV(.{ .x = 0, .y = y }, .{ .x = m.constants.screenWidthf, .y = y }, ray.DARKGRAY);
-            const numAsString = try std.fmt.bufPrintZ(&buf, "{d}", .{y});
+            const numAsString = try std.fmt.bufPrintZ(&here.buf, "{d}", .{y});
             ray.DrawTextEx(
                 ray.GetFontDefault(),
                 @ptrCast(numAsString),
@@ -397,11 +438,6 @@ fn blit(m: *M) !void {
             continue;
         }
         const p = m.context.positions.items[i];
-
-        //const c = switch (@divFloor(m.context.region.items[i], 2) % 2) {
-        //    0 => ray.SKYBLUE,
-        //    else => ray.ORANGE,
-        //};
         const c = switch (i % 4) {
             0 => ray.SKYBLUE,
             1 => ray.PINK,
@@ -419,15 +455,45 @@ fn blit(m: *M) !void {
     if (m.config.showFps == 1) {
         ray.DrawFPS(10, 10);
     }
-
-    //    if (m.constants.showFps == 1) {
-    //        ray.DrawText(@ptrCast(try std.fmt.bufPrintZ(&buf, "{d}", .{m.context.fps})), 10, 10, 10, ray.WHITE);
-    //    }
 }
 
 fn handleEvents(m: *M) !void {
     if (ray.WindowShouldClose()) {
         m.running = false;
+    }
+    switch (ray.GetKeyPressed()) {
+        // Shapes
+        ray.KEY_GRAVE => {
+            m.context.targets.clearRetainingCapacity();
+            m.context.setTargets(&m.constants, &m.config, Shape.Random, &m.randEngine);
+        },
+        ray.KEY_ONE => {
+            m.context.targets.clearRetainingCapacity();
+            m.context.setTargets(&m.constants, &m.config, Shape.Heart, &m.randEngine);
+        },
+        ray.KEY_TWO => {
+            m.context.targets.clearRetainingCapacity();
+            m.context.setTargets(&m.constants, &m.config, Shape.Flower, &m.randEngine);
+        },
+        ray.KEY_THREE => {
+            m.context.targets.clearRetainingCapacity();
+            m.context.setTargets(&m.constants, &m.config, Shape.Lissajous, &m.randEngine);
+        },
+        ray.KEY_FOUR => {
+            m.context.targets.clearRetainingCapacity();
+            m.context.setTargets(&m.constants, &m.config, Shape.Circle, &m.randEngine);
+        },
+        // config
+        ray.KEY_F => {
+            m.config.showFps = 1 - m.config.showFps;
+        },
+        ray.KEY_S => {
+            m.config.showShape = 1 - m.config.showShape;
+        },
+        ray.KEY_G => {
+            m.config.showGrid = 1 - m.config.showGrid;
+        },
+        else => {},
     }
 }
 
