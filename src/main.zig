@@ -1,4 +1,6 @@
 const std = @import("std");
+const Config = @import("config.zig");
+const Shape = Config.Shape;
 
 pub const ray = @cImport({
     @cInclude("raylib.h");
@@ -7,95 +9,6 @@ pub const ray = @cImport({
 });
 
 const M = @This();
-
-const Shape = enum(u8) {
-    Random,
-    Heart,
-    Flower,
-    Lissajous,
-    Circle,
-};
-
-const Config = struct {
-    agentRadius: f32 = 0.001,
-    attractionFactor: f32 = 100,
-    collisionPenalty: f32 = 0.0001,
-    epsilonAtZero: f32 = 1e-6,
-    finalShape: Shape = .Heart,
-    maxAgents: u64 = 10000,
-    randSeed: u64 = 0xDEADBEEF,
-    regionsNumberX: u64 = 131,
-    regionsNumberY: u64 = 70,
-    screenHeight: i32 = 600,
-    screenWidth: i32 = 960,
-    showFps: u1 = 0,
-    showGrid: u1 = 0,
-    showShape: u1 = 0,
-    frictionFactor: f32 = 125,
-    speedLimit: f32 = 200,
-
-    pub fn load(filePath: []const u8) !Config {
-        var config = Config{};
-
-        const monitor = ray.GetCurrentMonitor();
-        config.screenWidth = ray.GetMonitorWidth(monitor);
-        config.screenHeight = ray.GetMonitorHeight(monitor);
-
-        std.log.info("SCREEN {d} {d}/{d}", .{ monitor, config.screenWidth, config.screenHeight });
-
-        var file = try std.fs.cwd().openFile(filePath, .{ .mode = .read_only });
-        defer file.close();
-        var rbuf: [50]u8 = undefined;
-        var fileReader = file.reader(&rbuf);
-        while (fileReader.interface.takeDelimiter('\n')) |maybeLine| {
-            const line = maybeLine orelse break;
-            if (line.len == 0 or std.mem.startsWith(u8, line, "#")) {
-                continue;
-            }
-            var iter = std.mem.splitScalar(u8, line, '=');
-
-            const name = iter.next() orelse break;
-            const value = iter.next() orelse break;
-
-            if (std.mem.eql(u8, name, "agentRadius")) {
-                config.agentRadius = try std.fmt.parseFloat(f32, value);
-            } else if (std.mem.eql(u8, name, "attractionFactor")) {
-                config.attractionFactor = try std.fmt.parseFloat(f32, value);
-            } else if (std.mem.eql(u8, name, "collisionPenalty")) {
-                config.collisionPenalty = try std.fmt.parseFloat(f32, value);
-            } else if (std.mem.eql(u8, name, "epsilonAtZero")) {
-                config.epsilonAtZero = try std.fmt.parseFloat(f32, value);
-            } else if (std.mem.eql(u8, name, "finalShape")) {
-                config.finalShape = std.meta.stringToEnum(Shape, value) orelse return error.InvalidEnum;
-            } else if (std.mem.eql(u8, name, "maxAgents")) {
-                config.maxAgents = try std.fmt.parseInt(u64, value, 10);
-            } else if (std.mem.eql(u8, name, "regionsNumberX")) {
-                config.regionsNumberX = try std.fmt.parseInt(u64, value, 10);
-            } else if (std.mem.eql(u8, name, "regionsNumberY")) {
-                config.regionsNumberY = try std.fmt.parseInt(u64, value, 10);
-            } else if (std.mem.eql(u8, name, "showFps")) {
-                config.showFps = try std.fmt.parseInt(u1, value, 10);
-            } else if (std.mem.eql(u8, name, "showGrid")) {
-                config.showGrid = try std.fmt.parseInt(u1, value, 10);
-            } else if (std.mem.eql(u8, name, "showShape")) {
-                config.showShape = try std.fmt.parseInt(u1, value, 10);
-            } else if (std.mem.eql(u8, name, "screenHeight")) {
-                config.screenHeight = try std.fmt.parseInt(i32, value, 10);
-            } else if (std.mem.eql(u8, name, "screenWidth")) {
-                config.screenWidth = try std.fmt.parseInt(i32, value, 10);
-            } else if (std.mem.eql(u8, name, "speedLimit")) {
-                config.speedLimit = try std.fmt.parseFloat(f32, value);
-            } else if (std.mem.eql(u8, name, "frictionFactor")) {
-                config.frictionFactor = try std.fmt.parseFloat(f32, value);
-            } else if (std.mem.eql(u8, name, "randSeed")) {
-                config.randSeed = try std.fmt.parseInt(u64, value, 0);
-            }
-        } else |err| {
-            return err;
-        }
-        return config;
-    }
-};
 
 const Constants = struct {
     distRequiredForCollision: f32 = 0.001 * 0.001,
@@ -264,10 +177,16 @@ fn init(confpath: []const u8) !M {
     ray.SetTraceLogLevel(ray.LOG_ERROR);
     ray.InitWindow(0, 0, "Zig Particle Demo");
 
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    
+    const monitor = ray.GetCurrentMonitor();
+    const screenWidth = ray.GetMonitorWidth(monitor);
+    const screenHeight = ray.GetMonitorHeight(monitor);
+
     var m = M{
-        .allocator = std.heap.GeneralPurposeAllocator(.{}){},
+        .allocator = gpa,
         .running = true,
-        .config = try Config.load(confpath),
+        .config = try Config.load(confpath, screenWidth, screenHeight, gpa.allocator()),
         .constants = undefined,
         .context = undefined,
         .xoshi = undefined,
