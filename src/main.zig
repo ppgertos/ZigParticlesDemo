@@ -125,8 +125,8 @@ const Context = struct {
                     const t = @as(f32, @floatFromInt(i)) * 2 * std.math.pi / @as(f32, @floatFromInt(config.maxAgents));
                     const st = @sin(t);
                     context.targets.appendAssumeCapacity([_]f32{
-                        (constants.screenWidthf / 2) + constants.screenHeightf * 0.03 * 16 * st * st * st,
-                        constants.screenHeightf * 0.42 - constants.screenHeightf * 0.03 * (13 * @cos(t) - 5 * @cos(2 * t) - 2 * @cos(3 * t) - @cos(4 * t)),
+                        xOffset + constants.screenHeightf * 0.03 * 16 * st * st * st,
+                        yOffset * 0.84 - constants.screenHeightf * 0.03 * (13 * @cos(t) - 5 * @cos(2 * t) - 2 * @cos(3 * t) - @cos(4 * t)),
                     });
                 },
                 .Flower => {
