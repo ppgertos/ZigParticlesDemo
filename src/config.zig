@@ -10,7 +10,7 @@ pub const Shape = enum(u8) {
     Circle,
 };
 
-agentRadius: f32 = 0.001,
+agentRadius: f32 = 0.4,
 attractionFactor: f32 = 100,
 collisionPenalty: f32 = 0.0001,
 epsilonAtZero: f32 = 1e-6,

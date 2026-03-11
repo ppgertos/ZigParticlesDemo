@@ -13,6 +13,14 @@ Code is done basicaly in single file, to check how readable it would be this way
 
 ## Getting Started
 
+### Requirements
+
+- **Zig:** 0.14.1 or later (tested with 0.15.2)
+- **Raylib:** Automatically fetched during build
+- **System:** Linux/Windows/macOS with graphics support
+
+### Build & Run
+
 1. Clone the repository:
    ```sh
    git clone https://github.com/ppgertos/ZigParticlesDemo.git
