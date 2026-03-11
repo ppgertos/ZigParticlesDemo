@@ -178,7 +178,7 @@ fn init(confpath: []const u8) !M {
     ray.InitWindow(0, 0, "Zig Particle Demo");
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    
+
     const monitor = ray.GetCurrentMonitor();
     const screenWidth = ray.GetMonitorWidth(monitor);
     const screenHeight = ray.GetMonitorHeight(monitor);
@@ -208,7 +208,7 @@ fn init(confpath: []const u8) !M {
 fn loop(m: *M) !void {
     while (m.running) {
         try m.simulate();
-        try m.blit();
+        try m.show();
         try m.handleEvents();
     }
 }
@@ -291,31 +291,38 @@ fn simulate(m: *M) !void {
             r.* = newR;
         }
 
-        // detecting and handling collisions
-        for (m.context.agentsInRegions.items[m.context.region.items[i]].items) |neighbor| {
-            if (neighbor == i or neighbor > m.config.maxAgents) {
-                continue;
-            }
-            const np = m.context.positions.items[neighbor];
-            const diff = [2]f32{ np[0] - p[0], np[1] - p[1] };
-            const dist2 = diff[0] * diff[0] + diff[1] * diff[1];
-            if (dist2 < m.constants.distRequiredForCollision) {
-                s[0] = -s[0] * (1.0 - m.config.collisionPenalty);
-                s[1] = -s[1] * (1.0 - m.config.collisionPenalty);
-                break;
-            }
-        }
-
         // speed clamping
         if (m.config.speedLimit * m.config.speedLimit < s[0] * s[0] + s[1] * s[1]) {
             const scale = m.config.speedLimit / @sqrt(s[0] * s[0] + s[1] * s[1]);
             s[0] *= scale;
             s[1] *= scale;
         }
+
+        // detecting and handling collisions
+        const lhs = i;
+        const newRegionsAgents = m.context.agentsInRegions.items[newR].items;
+        const lp = m.context.positions.items[lhs];
+        for (newRegionsAgents) |rhs| {
+            if (lhs >= rhs or lhs > m.config.maxAgents) {
+                continue;
+            }
+            const rp = m.context.positions.items[rhs];
+            const diff = [2]f32{ lp[0] - rp[0], lp[1] - rp[1] };
+            const dist2 = diff[0] * diff[0] + diff[1] * diff[1];
+            if (dist2 < m.constants.distRequiredForCollision) {
+                const ls = &m.context.speeds.items[lhs];
+                const rs = &m.context.speeds.items[rhs];
+                ls[0] = -ls[0] * (1.0 - m.config.collisionPenalty);
+                ls[1] = -ls[1] * (1.0 - m.config.collisionPenalty);
+                rs[0] = -rs[0] * (1.0 - m.config.collisionPenalty);
+                rs[1] = -rs[1] * (1.0 - m.config.collisionPenalty);
+                break;
+            }
+        }
     }
 }
 
-fn blit(m: *M) !void {
+fn show(m: *M) !void {
     ray.BeginDrawing();
     defer ray.EndDrawing();
     ray.ClearBackground(ray.BLACK);
@@ -352,11 +359,7 @@ fn blit(m: *M) !void {
         }
     }
 
-    for (m.context.agentIds.items) |i| {
-        if (i > m.config.maxAgents) {
-            continue;
-        }
-        const p = m.context.positions.items[i];
+    for (m.context.positions.items, 0..) |p, i| {
         const c = switch (i % 4) {
             0 => ray.SKYBLUE,
             1 => ray.PINK,

@@ -65,12 +65,13 @@ pub fn load(filePath: []const u8, detectedScreenWidth: i32, detectedScreenHeight
     var fileReader = file.reader(&rbuf);
     while (fileReader.interface.takeDelimiter('\n')) |maybeLine| {
         const line = maybeLine orelse break;
-        if (line.len == 0 or std.mem.startsWith(u8, line, "#")) {
+        const trimmedLine = std.mem.trim(u8, line, " ");
+        if (trimmedLine.len == 0 or trimmedLine[0] == '#' or trimmedLine[0] == ';') {
             continue;
         }
-        var iter = std.mem.splitScalar(u8, line, '=');
-        const name = iter.next() orelse break;
-        const value = iter.next() orelse break;
+        var iter = std.mem.splitScalar(u8, trimmedLine, '=');
+        const name = std.mem.trim(u8, iter.next() orelse break, " ");
+        const value = std.mem.trim(u8, iter.next() orelse break, " ");
 
         if (meta.get(name)) |f| {
             try convertField(f, value);
